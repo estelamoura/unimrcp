@@ -18,7 +18,7 @@
     FILE          log file output
     CONSOLE,FILE  both console and the log file output
   -->
-  <output>CONSOLE</output>
+  <output>FILE,CONSOLE</output>
 
   <!--  Set the format of the log messages
     DATE          date output
