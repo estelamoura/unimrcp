@@ -286,6 +286,38 @@ static apt_bool_t asr_stream_read(mpf_audio_stream_t *stream, mpf_frame_t *frame
 	return TRUE;
 }
 
+/** Create SET-PARAMS request */
+static mrcp_message_t* set_params_message_create(asr_session_t *asr_session)
+{
+  /* create MRCP message */
+  mrcp_message_t *mrcp_message = mrcp_application_message_create(
+    asr_session->mrcp_session,
+    asr_session->mrcp_channel,
+    RECOGNIZER_SET_PARAMS);
+  if(!mrcp_message)
+    return NULL;
+
+  if(mrcp_message) {
+    mrcp_recog_header_t *recog_header;
+
+    /* get/allocate recognizer header */
+    recog_header = mrcp_resource_header_prepare(mrcp_message);
+    if(recog_header) {
+      recog_header->confidence_threshold = 0.9f;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_CONFIDENCE_THRESHOLD);
+      recog_header->n_best_list_length = 2;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_N_BEST_LIST_LENGTH);
+      recog_header->no_input_timeout = 1000;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_NO_INPUT_TIMEOUT);
+      recog_header->recognition_timeout = 5000;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_RECOGNITION_TIMEOUT);
+      recog_header->start_input_timers = FALSE;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_START_INPUT_TIMERS);
+    }
+  }
+  return mrcp_message;
+}
+
 /** Create DEFINE-GRAMMAR request */
 static mrcp_message_t* define_grammar_message_create(asr_session_t *asr_session, const char *grammar_uri)
 {
@@ -340,20 +372,16 @@ static mrcp_message_t* recognize_message_create(asr_session_t *asr_session, cons
 				/* set recognizer header fields */
 				recog_header->cancel_if_queue = FALSE;
 				mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_CANCEL_IF_QUEUE);
-			}
-			recog_header->no_input_timeout = 5000;
+      }
+      recog_header->confidence_threshold = 0.7f;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_CONFIDENCE_THRESHOLD);
+      recog_header->n_best_list_length = 4;
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_N_BEST_LIST_LENGTH);
+			recog_header->no_input_timeout = 2000;
 			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_NO_INPUT_TIMEOUT);
-			recog_header->recognition_timeout = 20000;
+			recog_header->recognition_timeout = 11000;
 			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_RECOGNITION_TIMEOUT);
-			recog_header->speech_complete_timeout = 400;
-			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_SPEECH_COMPLETE_TIMEOUT);
-			recog_header->dtmf_term_timeout = 3000;
-			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_DTMF_TERM_TIMEOUT);
-			recog_header->dtmf_interdigit_timeout = 3000;
-			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_DTMF_INTERDIGIT_TIMEOUT);
-			recog_header->confidence_threshold = 0.5f;
-			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_CONFIDENCE_THRESHOLD);
-			recog_header->start_input_timers = TRUE;
+      recog_header->start_input_timers = TRUE;
 			mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_START_INPUT_TIMERS);
 		}
 	}
@@ -533,18 +561,41 @@ ASR_CLIENT_DECLARE(asr_session_t*) asr_session_create(asr_engine_t *engine, cons
 
 /** Initiate recognition based on specified grammar and input file */
 ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
-									asr_session_t *asr_session, 
-									const char *grammar_uri, 
+									asr_session_t *asr_session,
+									const char *grammar_uri,
 									const char *input_file,
-									const char *send_define_grammar)
+									const char *send_define_grammar,
+                  const char *send_set_params)
 {
 	const mrcp_app_message_t *app_message;
-	mrcp_message_t *mrcp_message;
+	mrcp_message_t *mrcp_message = NULL;
 
 	app_message = NULL;
 	/* Reset prev recog result (if any) */
 	asr_session->recog_complete = NULL;
-	
+
+  if(strcmp(send_set_params, "y") == 0) {
+    mrcp_message = set_params_message_create(asr_session);
+    if(!mrcp_message) {
+      apt_log(APT_LOG_MARK,APT_PRIO_WARNING,"Failed to Create SET-PARAMS Request");
+      return NULL;
+    }
+
+    /* Send SET-PARAMS request and wait for the response */
+    apr_thread_mutex_lock(asr_session->mutex);
+    if(mrcp_application_message_send(asr_session->mrcp_session,asr_session->mrcp_channel,mrcp_message) == TRUE) {
+      apr_thread_cond_wait(asr_session->wait_object,asr_session->mutex);
+      app_message = asr_session->app_message;
+      asr_session->app_message = NULL;
+    }
+    apr_thread_mutex_unlock(asr_session->mutex);
+
+    if(mrcp_response_check(app_message,MRCP_REQUEST_STATE_COMPLETE) == FALSE) {
+      return NULL;
+    }
+  }
+
+  mrcp_message = NULL;
 	if(strcmp(send_define_grammar, "y") == 0) {
 		mrcp_message = define_grammar_message_create(asr_session,grammar_uri);
 		if(!mrcp_message) {
@@ -565,6 +616,7 @@ ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
 			return NULL;
 		}
 
+		mrcp_message = NULL;
 		mrcp_message = recognize_message_create(asr_session, "session:CPqD-ASR-demo-uri");
 	}
 	else {

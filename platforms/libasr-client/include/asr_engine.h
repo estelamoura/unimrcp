@@ -79,15 +79,18 @@ ASR_CLIENT_DECLARE(asr_session_t*) asr_session_create(asr_engine_t *engine, cons
 /**
  * Initiate recognition based on specified grammar and input file.
  * @param session the session to run recognition in the scope of
- * @param grammar_file the name of the grammar file to use (path is relative to data dir)
+ * @param grammar_uri the uri of the grammar file to use. It shall be in the ASR Server
  * @param input_file the name of the audio input file to use (path is relative to data dir)
+ * @param send_define_grammar define if the message DEFINE-GRAMMAR is sent or not
+ * @param send_set_params define if the message SET-PARAMS is sent or not
  * @return the recognition result (input element of NLSML content)
  */
 ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
-									asr_session_t *asr_session, 
-									const char *grammar_uri, 
+									asr_session_t *asr_session,
+									const char *grammar_uri,
 									const char *input_file,
-									const char *send_define_grammar);
+									const char *send_define_grammar,
+                  const char *send_set_params);
 
 /**
  * Initiate recognition based on specified grammar and input stream.

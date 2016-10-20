@@ -40,6 +40,7 @@ typedef struct {
 	const char        *profile;
 
 	const char        *send_define_grammar;
+  const char        *send_set_params;
 	int                id;
 
 	apr_thread_t      *thread;
@@ -60,7 +61,7 @@ static void* APR_THREAD_FUNC asr_session_run(apr_thread_t *thread, void *data)
 		int i;
 		for(i = 1; i <= atoi(params->recogs_repetition); i++) {
 			start = time(NULL);
-			result = asr_session_file_recognize(session,params->grammar_uri,params->input_file,params->send_define_grammar);
+      result = asr_session_file_recognize(session,params->grammar_uri,params->input_file,params->send_define_grammar, params->send_set_params);
 			end = time(NULL);
 			elapsed_time = (double)(end - start);
 			printf("\n\n*** (Session %d) Profile: %s. Recognition %d finished. Elapsed time %.2f seconds.", params->id, params->profile, i, elapsed_time);
@@ -82,7 +83,8 @@ static void* APR_THREAD_FUNC asr_session_run(apr_thread_t *thread, void *data)
 
 /** Launch demo ASR session */
 static apt_bool_t asr_session_launch(asr_engine_t *engine, const char *grammar_uri, const char *input_file,
-																		 const char *profile, const char *recogs_repetition, const char *send_define_grammar)
+																		 const char *profile, const char *recogs_repetition, const char *send_define_grammar,
+                                     const char *send_set_params)
 {
 	apr_pool_t *pool;
 	asr_params_t *params;
@@ -92,6 +94,14 @@ static apt_bool_t asr_session_launch(asr_engine_t *engine, const char *grammar_u
 	params = apr_palloc(pool,sizeof(asr_params_t));
 	params->pool = pool;
 	params->engine = engine;
+
+  if(send_set_params) {
+    params->send_set_params = apr_pstrdup(pool,send_set_params);
+  }
+  else {
+    apt_log(APT_LOG_MARK,APT_PRIO_ERROR,"Empty parameter: send_set_params (input help for usage)");
+    return FALSE;
+  }
 
 	if(send_define_grammar) {
 		params->send_define_grammar = apr_pstrdup(pool,send_define_grammar);
@@ -150,12 +160,13 @@ static apt_bool_t cmdline_process(asr_engine_t *engine, char *cmdline)
 	name = apr_strtok(cmdline, " ", &last);
 
 	if(strcasecmp(name,"run") == 0) {
+    char *send_set_params = apr_strtok(NULL, " ", &last);
 		char *send_define_grammar = apr_strtok(NULL, " ", &last);
 		char *grammar = apr_strtok(NULL, " ", &last);
 		char *input = apr_strtok(NULL, " ", &last);
     char *recogs_repetition = apr_strtok(NULL, " ", &last);
 		char *profile = apr_strtok(NULL, " ", &last);
-		asr_session_launch(engine,grammar,input,profile,recogs_repetition,send_define_grammar);
+    asr_session_launch(engine,grammar,input,profile,recogs_repetition,send_define_grammar,send_set_params);
 	}
 	else if(strcasecmp(name,"loglevel") == 0) {
 		char *priority = apr_strtok(NULL, " ", &last);
@@ -168,20 +179,43 @@ static apt_bool_t cmdline_process(asr_engine_t *engine, char *cmdline)
 	}
 	else if(strcasecmp(name,"help") == 0) {
 		printf("\nUsage:"
-			"\n - run <send_define_grammar> <grammar_uri> <audio_input_file> [recogs_repetition] [profile_name]\n\n"
-			"       1- send_define_grammar: 'y' to send DEFINE-GRAMMAR message or any other value to not send it\n"
-			"       2- grammar_uri: is the path of the slm or grammar to be used in the recognition\n"
-			"       3- audio_input_file: is the name of an audio file (if the audio is in the data dir)\n"
-      "          or the full path of the audio (if it is not in the data dir)\n"
-      "       4- recogs_repetition: is the number of recognitions in the same session (default = 1)\n"
-			"       5- profile_name: is one of 'uni2', 'uni1'\n"
-      "          (by default. You can add more in the file conf/client-profiles/unimrcp.xml)"
-			"\n   Examples: \n"
-			"         run y builtin:lm pt-br-male-8KHz.raw\n"
-      "         run n builtin:lm pt-br-male-8KHz.raw 10\n"
-			"         run y builtin:lm pt-br-male-8KHz.raw 10 uni1\n"
-      "\n - loglevel [level] (set loglevel, one of 0,1...7)\n"
-      "\n - quit, exit\n");
+      "\n"
+      "    run <send_set_params> <send_define_grammar> <grammar_uri> <audio_input_file> [recogs_repetition] [profile_name]\n\n"
+      "       1- send_set_params: 'y' to send SET-PARAMS message or any other value to not send it\n"
+      "          The sent parameters are:\n"
+      "            |__________________________________|\n"
+      "            |  confidence_threshold = 0.9      |\n"
+      "            |  n_best_list_length = 2          |\n"
+      "            |  no_input_timeout = 1000         |\n"
+      "            |  recognition_timeout = 5000      |\n"
+      "            |  start_input_timers = FALSE      |\n"
+      "            |__________________________________|\n\n"
+      "       2- send_define_grammar: 'y' to send DEFINE-GRAMMAR message or any other value to not send it\n\n"
+      "       3- grammar_uri: is the path of the slm or grammar to be used in the recognition\n\n"
+			"       4- audio_input_file: is the name of an audio file (if the audio is in the data dir)\n"
+      "          or the full path of the audio (if it is not in the data dir)\n\n"
+      "       5- recogs_repetition: is the number of recognitions in the same session (default = 1)\n\n"
+			"       6- profile_name: is one of 'uni2', 'uni1'\n"
+      "          (by default. You can add more in the file conf/client-profiles/unimrcp.xml)\n"
+			"\n"
+      "       Examples of run command: \n"
+			"         run y y builtin:lm pt-br-male-8KHz.raw\n"
+      "         run n n builtin:lm pt-br-male-8KHz.raw 5\n"
+			"         run y n builtin:lm pt-br-male-8KHz.raw 3 uni1\n"
+      "\n"
+      "    loglevel [level] (set loglevel, one of 0,1...7)\n"
+      "\n"
+      "    quit, exit\n"
+      "\n"
+      "NOTE: Some parameters are sent in the RECOGNIZE message header.\n"
+      "      The sent parameters are:\n"
+      "        |__________________________________|\n"
+      "        |  confidence_threshold = 0.7      |\n"
+      "        |  n_best_list_length = 4          |\n"
+      "        |  no_input_timeout = 2000         |\n"
+      "        |  recognition_timeout = 11000     |\n"
+      "        |  start_input_timers = TRUE       |\n"
+      "        |__________________________________|\n");
 	}
 	else {
 		printf("Unknown command: %s (input help for usage)\n",name);
