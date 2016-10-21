@@ -66,10 +66,10 @@ static void* APR_THREAD_FUNC asr_session_run(apr_thread_t *thread, void *data)
 			elapsed_time = (double)(end - start);
 			printf("\n\n*** (Session %d) Profile: %s. Recognition %d finished. Elapsed time %.2f seconds.", params->id, params->profile, i, elapsed_time);
 			if(result) {
-				printf("\n***** Result: %s\n\n", result);
+				printf("%s\n\n", result);
 			}
 			else {
-				printf("\n***** Result NULL\n\n");
+				printf("\n    Result NULL\n\n");
 			}
 			result = NULL;
 		}

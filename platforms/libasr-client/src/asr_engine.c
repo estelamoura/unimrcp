@@ -391,9 +391,9 @@ static mrcp_message_t* recognize_message_create(asr_session_t *asr_session, cons
 /** Get NLSML result */
 static const char* nlsml_result_get(mrcp_message_t *message)
 {
+  nlsml_result_t *result = nlsml_result_parse(message->body.buf, message->body.length, message->pool);
 	nlsml_interpretation_t *interpretation;
-	nlsml_instance_t *instance;
-	nlsml_result_t *result = nlsml_result_parse(message->body.buf, message->body.length, message->pool);
+  nlsml_input_t *input;
 	if(!result) {
 		return NULL;
 	}
@@ -403,15 +403,10 @@ static const char* nlsml_result_get(mrcp_message_t *message)
 	if(!interpretation) {
 		return NULL;
 	}
-	
-	/* get first instance */
-	instance = nlsml_interpretation_first_instance_get(interpretation);
-	if(!instance) {
-		return NULL;
-	}
 
-	nlsml_instance_swi_suppress(instance);
-	return nlsml_instance_content_generate(instance, message->pool);
+	input = nlsml_interpretation_input_get(interpretation);
+
+	return nlsml_input_content_generate(input, message->pool);
 }
 
 
@@ -559,6 +554,53 @@ ASR_CLIENT_DECLARE(asr_session_t*) asr_session_create(asr_engine_t *engine, cons
 	return asr_session;
 }
 
+/** Send GET-PARAMS request */
+static apt_bool_t send_get_params_message(asr_session_t *asr_session)
+{
+  /* create MRCP message */
+  mrcp_message_t *mrcp_message = mrcp_application_message_create(
+    asr_session->mrcp_session,
+    asr_session->mrcp_channel,
+    RECOGNIZER_GET_PARAMS);
+  if(!mrcp_message)
+    return FALSE;
+
+  if(mrcp_message) {
+    mrcp_recog_header_t *recog_header;
+
+    /* get/allocate recognizer header */
+    recog_header = mrcp_resource_header_prepare(mrcp_message);
+    if(recog_header) {
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_CONFIDENCE_THRESHOLD);
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_N_BEST_LIST_LENGTH);
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_NO_INPUT_TIMEOUT);
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_RECOGNITION_TIMEOUT);
+      mrcp_resource_header_property_add(mrcp_message,RECOGNIZER_HEADER_START_INPUT_TIMERS);
+    }
+  }
+
+  if(!mrcp_message) {
+    apt_log(APT_LOG_MARK,APT_PRIO_WARNING,"Failed to Create GET-PARAMS Request");
+    return FALSE;
+  }
+
+  /* Send GET-PARAMS request and wait for the response */
+  const mrcp_app_message_t *app_message;
+  apr_thread_mutex_lock(asr_session->mutex);
+  if(mrcp_application_message_send(asr_session->mrcp_session,asr_session->mrcp_channel,mrcp_message) == TRUE) {
+    apr_thread_cond_wait(asr_session->wait_object,asr_session->mutex);
+    app_message = asr_session->app_message;
+    asr_session->app_message = NULL;
+  }
+  apr_thread_mutex_unlock(asr_session->mutex);
+
+  if(mrcp_response_check(app_message,MRCP_REQUEST_STATE_COMPLETE) == FALSE) {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
 /** Initiate recognition based on specified grammar and input file */
 ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
 									asr_session_t *asr_session,
@@ -573,6 +615,11 @@ ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
 	app_message = NULL;
 	/* Reset prev recog result (if any) */
 	asr_session->recog_complete = NULL;
+
+  static apt_bool_t get_params_sent;
+  get_params_sent = send_get_params_message(asr_session);
+  if(!get_params_sent)
+    printf("\nASR Client: Failed to send GET-PARAMS request.\n");
 
   if(strcmp(send_set_params, "y") == 0) {
     mrcp_message = set_params_message_create(asr_session);
@@ -593,6 +640,10 @@ ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
     if(mrcp_response_check(app_message,MRCP_REQUEST_STATE_COMPLETE) == FALSE) {
       return NULL;
     }
+
+    get_params_sent = send_get_params_message(asr_session);
+    if(!get_params_sent)
+      printf("\nASR Client: Failed to send GET-PARAMS request.\n");
   }
 
   mrcp_message = NULL;
@@ -640,7 +691,11 @@ ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
 	if(mrcp_response_check(app_message,MRCP_REQUEST_STATE_INPROGRESS) == FALSE) {
 		return NULL;
 	}
-	
+
+	get_params_sent = send_get_params_message(asr_session);
+  if(!get_params_sent)
+    printf("\nASR Client: Failed to send GET-PARAMS request.\n");
+
 	/* Open input file and start streaming */
 	asr_session->input_mode = INPUT_MODE_FILE;
 	if(asr_input_file_open(asr_session,input_file) == FALSE) {
@@ -666,6 +721,10 @@ ASR_CLIENT_DECLARE(const char*) asr_session_file_recognize(
 		}
 	}
 	while(!asr_session->recog_complete);
+
+  get_params_sent = send_get_params_message(asr_session);
+  if(!get_params_sent)
+    printf("\nASR Client: Failed to send GET-PARAMS request.\n");
 
 // 	/* Get results */
 	return nlsml_result_get(asr_session->recog_complete);
